@@ -1,0 +1,94 @@
+// Copyright (c) 2025 onomihime (github.com/onomihime)
+// Originally from: github.com/onomihime/UnityCustomUI
+// Licensed under the MIT License. See the LICENSE file in the repository root for full license text.
+// This file may be used in commercial projects provided the above copyright notice and this permission notice appear in all copies.
+
+#pragma kernel CSMain
+
+RWTexture2D<float4> Result;
+StructuredBuffer<float4> Points;
+StructuredBuffer<int> LineInfo;
+int LineCount;
+int Width;
+int Height;
+float Thickness;
+float4 LineColor;
+
+// Renamed 'point' parameter to 'testPoint'
+bool IsPointInCircle(float2 center, float radius, float2 testPoint)
+{
+    float dx = center.x - testPoint.x; // Use new name
+    float dy = center.y - testPoint.y; // Use new name
+    return (dx * dx + dy * dy) <= (radius * radius);
+}
+
+bool IsPointInLineSegmentEndCap(float2 linePoint, float2 direction, float radius, float2 testPoint, bool isStart)
+{
+    float2 v = testPoint - linePoint;
+    float dotProduct = dot(v, direction);
+    
+    // For start cap, only include points in the positive direction
+    // For end cap, only include points in the negative direction
+    if ((isStart && dotProduct < 0) || (!isStart && dotProduct > 0))
+        return false;
+        
+    return IsPointInCircle(linePoint, radius, testPoint);
+}
+
+[numthreads(8,8,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint)Width || id.y >= (uint)Height)
+        return;
+
+    float2 pixelPos = float2(id.x, id.y);
+
+    // For each line
+    // Renamed 'line' loop variable to 'lineIndex'
+    for (int lineIndex = 0; lineIndex < LineCount; lineIndex++)
+    {
+        int startIdx = LineInfo[lineIndex];      // Use new name
+        int endIdx = LineInfo[lineIndex + 1];    // Use new name
+
+        // For each segment in this line
+        for (int i = startIdx; i < endIdx - 1; i++)
+        {
+            float2 p1 = float2(Points[i].x * Width, Points[i].y * Height);
+            float2 p2 = float2(Points[i+1].x * Width, Points[i+1].y * Height);
+            float2 dir = normalize(p2 - p1);
+            float dist = distance(p1, p2);
+        
+            // Special handling for endpoints
+            if (i == startIdx) // First point
+            {
+                if (IsPointInLineSegmentEndCap(p1, dir, Thickness / 2.0, pixelPos, true))
+                {
+                    Result[id.xy] = LineColor;
+                    return;
+                }
+            }
+            else if (i == endIdx - 2) // Last point
+            {
+                if (IsPointInLineSegmentEndCap(p2, -dir, Thickness / 2.0, pixelPos, false))
+                {
+                    Result[id.xy] = LineColor;
+                    return;
+                }
+            }
+        
+            // Regular line segment handling
+            float2 v1 = pixelPos - p1;
+            float t = clamp(dot(v1, dir), 0.0, dist);
+            float2 proj = p1 + t * dir;
+        
+            if (IsPointInCircle(proj, Thickness / 2.0, pixelPos))
+            {
+                Result[id.xy] = LineColor;
+                return;
+            }
+        }
+    }
+
+    // If no line was hit, potentially set a default background color (optional)
+    // Result[id.xy] = float4(0,0,0,1); // Example: Black background
+}
